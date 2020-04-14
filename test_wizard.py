@@ -20,3 +20,24 @@ class TestWizard(TestCase):
                 presenter=TestPresenter("value")
             ),
             "value")
+
+    def test_asnwer(self):
+        wiz = Wizard()
+        wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+        self.assertEqual(wiz['A'], "response")
+
+
+    def test_error_duplicate_name(self):
+        wiz = Wizard()
+        wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+        with self.assertRaises(ValueError):
+            wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+
+
+    def test_can_ask_question_twice(self):
+        try:
+            wiz = Wizard()
+            wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+            wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+        except:
+            self.fail()
