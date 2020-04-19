@@ -30,14 +30,36 @@ class TestWizard(TestCase):
     def test_error_duplicate_name(self):
         wiz = Wizard()
         wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
-        with self.assertRaises(ValueError):
+        with self.assertRaises(KeyError):
             wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
 
 
-    def test_can_ask_question_twice(self):
+    def test_can_ask_unnamed_question_twice(self):
         try:
             wiz = Wizard()
-            wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
-            wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
+            wiz.ask(question="...", presenter=TestPresenter("response"))
+            wiz.ask(question="...", presenter=TestPresenter("response2"))
         except:
             self.fail()
+
+
+    def test_q_context(self):
+        wiz = Wizard()
+        wiz.ask(question='parent question', name="A", presenter=TestPresenter("A"))
+        with wiz.context("child1"):
+            wiz.ask(question='parent question', name="A", presenter=TestPresenter("B"))
+        with wiz.context("child2"):
+            wiz.ask(question='parent question', name="A", presenter=TestPresenter("C"))
+
+        self.assertEqual(wiz['A'], 'A')
+        self.assertEqual(wiz['child1']['A'], 'B')
+        self.assertEqual(wiz['child2']['A'], 'C')
+
+
+    def test_nested_context(self):
+        wiz = Wizard()
+        with wiz.context("child1"):
+            with wiz.context("child2"):
+                wiz.ask(question='parent question', name="A", presenter=TestPresenter("A"))
+
+        self.assertEqual(wiz['child1']['child2']['A'], 'A')

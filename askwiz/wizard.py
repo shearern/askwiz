@@ -13,15 +13,25 @@ from .validators import AnswerRequiredValidator
 from .validators import YesNoAnswerValidator
 from .validators import OptionsValidators
 
+
+class QuestionContextManager:
+    def __init__(self, wizard, context_name):
+        self.wizard = wizard
+        self.context = context_name
+    def __enter__(self):
+        self.wizard._open_q_context(self.context)
+    def __exit__(self, *args):
+        self.wizard._close_q_context(self.context)
+
+
 class Wizard:
 
     def __init__(self, saveto=None):
         self.__path = None
         self.__history = dict()
         self.__auto_accept_prior_answers = False
-        # Question context to restreict all answers to a specified domain
-        self.__q_context = None
-        self.__names_already_asked = set()
+        self.__answsers = dict()
+        self.__q_context = list()
 
 
     @property
@@ -59,7 +69,82 @@ class Wizard:
             json.dump(self.__history, fh)
 
 
-    def ask(self, question, default=None, required=True, name=None, presenter=None, validators=None, q_context=None):
+    def _check_name_unique(self, name):
+        '''Check to see if question name (or context name) is already used'''
+        # Use prior answers history as we always set that
+        try:
+            history = self.__history['questions']
+            for context in self.__q_context:
+                history = history[context]
+        except KeyError:
+            return
+        if name in history:
+            raise KeyError("Name %s already used" % (name))
+
+
+    def _get_prior_answer(self, name):
+        '''Find the prior answer for a question'''
+        try:
+            history = self.__history['questions']
+            for context in self.__q_context:
+                history = history[context]
+            return history[name]
+        except KeyError:
+            return None
+
+
+    def _make_unique_name(self, name):
+        '''Make name unique'''
+        try:
+            history = self.__history['questions']
+            for context in self.__q_context:
+                history = history[context]
+
+            orig = name
+            i = 0
+            while name in history:
+                i += 1
+                name = orig + '.%d' % (i)
+            return name
+
+        except KeyError:
+            return name
+
+
+    def _save_answer(self, name, autonamed, input_answer, valid_answer):
+        '''
+        Save the answer the user provided
+
+        :param name: The name of the question
+        :param autonamed: Was the question name generated aautomatically
+        :param input_answer: The text version of the answer the user typed in
+        :param valid_answer: The validated version of the answer
+        '''
+
+        # Save input answer for repeat runs
+        if 'questions' not in self.__history:
+            self.__history['questions'] = dict()
+        history = self.__history['questions']
+        for context in self.__q_context:
+            if context not in history:
+                history[context] = dict()
+            history = history[context]
+        history[name] = input_answer
+
+        # Save validated answer to be accessed in this session
+        if not autonamed:
+            answers = self.__answsers
+            for context in self.__q_context:
+                if context not in answers:
+                    answers[context] = dict()
+                answers = answers[context]
+            answers[name] = valid_answer
+
+        if self.path is not None:
+            self.save(self.path)
+
+
+    def ask(self, question, default=None, required=True, name=None, presenter=None, validators=None):
         '''
         Ask a simple question of the user
 
@@ -71,25 +156,18 @@ class Wizard:
         :param validators:
             List of callables to validate answer and clean/convert.
             value = validate(value)
-        :param q_context:
-            If specified (or self.q_context is set), then name is restricted to that domain
         :return: value after validation and cleaned
         '''
 
         # Calc name to store question answer under
         if name is None:
-            name = question
-        if q_context is None:
-            q_context = self.__q_context
-
-        # Get prior answer
-        try:
-            history = self.__history['questions']
-            if q_context is not None:
-                history = history[q_context]
-            prior_answer = history[name]
-        except KeyError:
+            name = self._make_unique_name('__auto__.'+question)
+            autoname = True
             prior_answer = None
+        else:
+            self._check_name_unique(name)
+            autoname = False
+            prior_answer = self._get_prior_answer(name)
 
         # Calculate default value
         if prior_answer is not None:
@@ -137,17 +215,7 @@ class Wizard:
                 self.inform_user("Problem with answer: " + str(e))
 
         # Save answer
-        if 'questions' not in self.__history:
-            self.__history['questions'] = dict()
-        history = self.__history['questions']
-        if q_context is not None:
-            if q_context not in self.__history['questions']:
-                self.__history['questions'][q_context] = dict()
-                history = self.__history['questions'][q_context]
-        history[name] = input_answ
-
-        if self.path is not None:
-            self.save(self.path)
+        self._save_answer(name, autoname, input_answ, valid_answer)
 
         # Return cleaned value
         return valid_answer
@@ -227,3 +295,48 @@ class Wizard:
             validators = add_validator(validators, option_validator),
             q_context = q_context
         )
+
+
+    def __getitem__(self, name):
+        '''Access saved question answers'''
+        return self.__answsers[name]
+
+
+    def context(self, context_name):
+        '''
+        Define a context that the next queastions fit under
+
+        This is to support the need to sometimes ask the same question multiple
+        times for different objects.  For example, you may ask the name of 5 different
+        people.  This has two effects:
+
+         1) Question names are stored within the context and don't conflict with
+            the non-context questions or other contexts.
+         2) Answers are also stored within the context and accessed by:
+            wiz['context']['question_name']
+
+        :param context_name: The name to identify the context (can't reuse)
+        '''
+        return QuestionContextManager(self, context_name)
+
+
+    def _open_q_context(self, context_name):
+        '''
+        Open a new context
+
+        :param context_name: Name of context being opened
+        '''
+        self._check_name_unique(context_name)
+        self.__q_context.append(context_name)
+
+
+    def _close_q_context(self, context_name=None):
+        '''
+        Close the context opened by add_q_context()
+
+        :param context_name: If specified, check that named context is actualy open
+        '''
+        if context_name is not None:
+            if len(self.__q_context) == 0 or self.__q_context[-1] != context_name:
+                raise ValueError("Context %s is the current context" % (context_name))
+        self.__q_context.pop()
