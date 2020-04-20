@@ -24,14 +24,92 @@ class QuestionContextManager:
         self.wizard._close_q_context(self.context)
 
 
+class QuestionData:
+
+    def __init__(self, prior_answer = None):
+        self.prior_answer = prior_answer
+        self.input_answer = None
+        self.answer = None
+        self.asked = False
+
+    def save_data(self):
+        return {
+            'type': 'question',
+            'answer': self.prior_answer,
+        }
+
+    @staticmethod
+    def from_save_data(data):
+        assert(data['type'] == 'question')
+        return QuestionData(prior_answer = data['answer'])
+
+
+class QuestionContextAnswers:
+    '''Wrap access to answers when indexing to answer outside Wizard'''
+    def __init__(self, questions):
+        self.__questions = questions
+    def __getitem__(self, name):
+        return self.__questions[name].answer
+    def __contains__(self, name):
+        return name in self.__questions
+
+
+class QuestionContext:
+
+    def __init__(self):
+        self.__questions = dict()
+
+    def save_data(self):
+        return {
+            'type': 'context',
+            'questions': {name: child.save_data() for (name, child) in self.__questions.items()},
+        }
+
+    def __setitem__(self, name, obj):
+        assert(obj.__class__ in (QuestionData, QuestionContext))
+        if name in self.__questions:
+            raise KeyError("Name already exists: " + name)
+        self.__questions[name] = obj
+
+    def __getitem__(self, name):
+        return self.__questions[name]
+
+    def __contains__(self, name):
+        return name in self.__questions
+
+    def merge_saved_data(self, data):
+        assert(data['type'] == 'context')
+        for name, obj in data['questions'].items():
+            if obj['type'] == 'question':
+                self.__questions[name] = QuestionData.from_save_data(obj)
+            elif obj['type'] == 'context':
+                if name not in self.__questions:
+                    self.__questions[name] = QuestionContext()
+                self.__questions[name].merge_saved_data(obj)
+            else:
+                raise ValueError("Unknown type code: " + obj['type'])
+
+
+    @property
+    def answer(self):
+        '''If accessing answers, then return object to proxy access to .answer'''
+        return QuestionContextAnswers(self.__questions)
+
+
+class AllQuestions(QuestionContext): pass
+
+
+
+
 class Wizard:
 
-    def __init__(self, saveto=None):
+    def __init__(self, saveto=None, load_if_exists=False, prompt_if_exists=True):
         self.__path = None
-        self.__history = dict()
-        self.__auto_accept_prior_answers = False
-        self.__answsers = dict()
+        self.__questions = AllQuestions()
         self.__q_context = list()
+
+        if saveto:
+            self.set_path(saveto, load_if_exists, prompt_if_exists)
 
 
     @property
@@ -61,87 +139,42 @@ class Wizard:
     def load_prior_answers(self, path):
         '''Load prior answer from history file'''
         with open(path, 'rt') as fh:
-            merge_dicts(self.__history, json.load(fh))
+            data = json.load(fh)
+            if 'questions' in data:
+                self.__questions.merge_saved_data(data['questions'])
 
 
-    def save(self, path):
-        with open(path, 'wt') as fh:
-            json.dump(self.__history, fh)
-
-
-    def _check_name_unique(self, name):
-        '''Check to see if question name (or context name) is already used'''
-        # Use prior answers history as we always set that
-        try:
-            history = self.__history['questions']
-            for context in self.__q_context:
-                history = history[context]
-        except KeyError:
+    def save(self, path=None):
+        if path is None:
+            path = self.__path
+        if path is None:
             return
-        if name in history:
-            raise KeyError("Name %s already used" % (name))
+        with open(path, 'wt') as fh:
+            json.dump({'questions': self.__questions.save_data()},
+                      fh, indent=4)
 
 
-    def _get_prior_answer(self, name):
-        '''Find the prior answer for a question'''
-        try:
-            history = self.__history['questions']
-            for context in self.__q_context:
-                history = history[context]
-            return history[name]
-        except KeyError:
-            return None
+    @property
+    def _cur_context(self):
+        '''Get the current QuestionContext'''
+        context = self.__questions
+        for context_name in self.__q_context:
+            context = context[context_name]
+        return context
 
 
     def _make_unique_name(self, name):
         '''Make name unique'''
         try:
-            history = self.__history['questions']
-            for context in self.__q_context:
-                history = history[context]
-
             orig = name
             i = 0
-            while name in history:
+            while name in self._cur_context and self._cur_context[name].asked:
                 i += 1
                 name = orig + '.%d' % (i)
             return name
 
         except KeyError:
             return name
-
-
-    def _save_answer(self, name, autonamed, input_answer, valid_answer):
-        '''
-        Save the answer the user provided
-
-        :param name: The name of the question
-        :param autonamed: Was the question name generated aautomatically
-        :param input_answer: The text version of the answer the user typed in
-        :param valid_answer: The validated version of the answer
-        '''
-
-        # Save input answer for repeat runs
-        if 'questions' not in self.__history:
-            self.__history['questions'] = dict()
-        history = self.__history['questions']
-        for context in self.__q_context:
-            if context not in history:
-                history[context] = dict()
-            history = history[context]
-        history[name] = input_answer
-
-        # Save validated answer to be accessed in this session
-        if not autonamed:
-            answers = self.__answsers
-            for context in self.__q_context:
-                if context not in answers:
-                    answers[context] = dict()
-                answers = answers[context]
-            answers[name] = valid_answer
-
-        if self.path is not None:
-            self.save(self.path)
 
 
     def ask(self, question, default=None, required=True, name=None, presenter=None, validators=None):
@@ -162,16 +195,23 @@ class Wizard:
         # Calc name to store question answer under
         if name is None:
             name = self._make_unique_name('__auto__.'+question)
-            autoname = True
-            prior_answer = None
+            autonamed = True
         else:
-            self._check_name_unique(name)
-            autoname = False
-            prior_answer = self._get_prior_answer(name)
+            autonamed = False
+
+        # Get question data
+        if name in self._cur_context:
+            qdata = self._cur_context[name]
+        else:
+            qdata = QuestionData()
+            self._cur_context[name] = qdata
+
+        if qdata.asked:
+            raise KeyError("Question name already used: %s" % (name))
 
         # Calculate default value
-        if prior_answer is not None:
-            default = prior_answer
+        if qdata.prior_answer is not None:
+            default = qdata.prior_answer
 
         # Calculate question prompt
         if presenter is None:
@@ -187,8 +227,6 @@ class Wizard:
             validators = list()
         else:
             validators = list(validators)
-        # if required:
-        #     validators.insert(0, AnswerRequiredValidator())
 
         # Start presenting question
         valid_answer = None
@@ -200,6 +238,9 @@ class Wizard:
 
                 if input_answ is None or len(input_answ.strip()) == 0:
                     input_answ = None
+
+                if not input_answ:
+                    input_answ = default
 
                 # Check required
                 if not input_answ:
@@ -222,7 +263,11 @@ class Wizard:
                 self.inform_user("Problem with answer: " + str(e))
 
         # Save answer
-        self._save_answer(name, autoname, input_answ, valid_answer)
+        qdata.prior_answer = input_answ
+        if not autonamed:
+            qdata.answer = valid_answer
+        qdata.asked = True
+        self.save()
 
         # Return cleaned value
         return valid_answer
@@ -308,7 +353,8 @@ class Wizard:
 
     def __getitem__(self, name):
         '''Access saved question answers'''
-        return self.__answsers[name]
+        answers = self.__questions.answer
+        return answers[name]
 
 
     def context(self, context_name):
@@ -335,7 +381,9 @@ class Wizard:
 
         :param context_name: Name of context being opened
         '''
-        self._check_name_unique(context_name)
+        if context_name in self._cur_context:
+            raise KeyError("Already have a context or question named " + context_name)
+        self._cur_context[context_name] = QuestionContext()
         self.__q_context.append(context_name)
 
 

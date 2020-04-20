@@ -1,5 +1,6 @@
+import os
 from unittest import TestCase
-
+from tempfile import NamedTemporaryFile
 
 from askwiz import Wizard
 
@@ -9,8 +10,13 @@ class TestPresenter:
     def __call__(self):
         return self.answer
 
+class AcceptDefault(TestPresenter):
+    def __init__(self):
+        super().__init__('')
+
 
 class TestWizard(TestCase):
+
 
     def test_ask(self):
         wiz = Wizard()
@@ -21,10 +27,30 @@ class TestWizard(TestCase):
             ),
             "value")
 
+
     def test_asnwer(self):
         wiz = Wizard()
         wiz.ask(question="...", name="A", presenter=TestPresenter("response"))
         self.assertEqual(wiz['A'], "response")
+
+
+    def test_prior(self):
+        tf = NamedTemporaryFile()
+        tf.close()
+        try:
+
+            wiz = Wizard(saveto=tf.name, load_if_exists=True, prompt_if_exists=False)
+            wiz.ask(name='A', question='...', presenter=TestPresenter('first'))
+
+            wiz = Wizard(saveto=tf.name, load_if_exists=True, prompt_if_exists=False)
+            self.assertEqual(
+                wiz.ask(name='A', question='...', presenter=AcceptDefault()),
+                'first')
+
+        finally:
+            if os.path.exists(tf.name):
+                os.unlink(tf.name)
+
 
 
     def test_error_duplicate_name(self):
