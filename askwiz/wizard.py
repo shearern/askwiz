@@ -187,7 +187,8 @@ class Wizard:
             validators = list()
         else:
             validators = list(validators)
-        validators.insert(0, AnswerRequiredValidator())
+        # if required:
+        #     validators.insert(0, AnswerRequiredValidator())
 
         # Start presenting question
         valid_answer = None
@@ -197,9 +198,15 @@ class Wizard:
             try:
                 input_answ = presenter()
 
+                if input_answ is None or len(input_answ.strip()) == 0:
+                    input_answ = None
+
                 # Check required
-                if required and len(input_answ.strip()) == 0:
-                    raise AnswerRequired()
+                if not input_answ:
+                    if required:
+                        raise AnswerRequired()
+                    else:
+                        input_answ = default
 
                 # Validate and clean answer
                 value = input_answ
@@ -221,7 +228,11 @@ class Wizard:
         return valid_answer
 
 
-    def ask_yn(self, question, default=None, required=True, name=None, presenter=None, validators=None, q_context=None):
+    def inform_user(self, info):
+        print(info)
+
+
+    def ask_yn(self, question, default=None, required=True, name=None, presenter=None, validators=None):
         '''
         Ask a question that needs to be yes or no
 
@@ -233,8 +244,6 @@ class Wizard:
         :param validators:
             List of callables to validate answer and clean/convert.
             value = validate(value)
-        :param q_context:
-            If specified (or self.q_context is set), then name is restricted to that domain
         :return: value after validation and cleaned
         '''
 
@@ -243,6 +252,7 @@ class Wizard:
                 default = 'yes'
             else:
                 default = 'no'
+            required = False
 
         return self.ask(
             question = question,
@@ -251,7 +261,6 @@ class Wizard:
             name = name,
             presenter = presenter,
             validators = add_validator(validators, YesNoAnswerValidator()),
-            q_context = q_context
         )
 
 

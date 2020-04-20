@@ -3,6 +3,7 @@ from .exceptions import ValidationFailed
 from .exceptions import AnswerRequired
 from .exceptions import NotAValidOption
 
+
 class AnswerRequiredValidator:
     def __call__(self, value):
         if value is None or len(str(value).strip()) == 0:

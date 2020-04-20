@@ -63,3 +63,52 @@ class TestWizard(TestCase):
                 wiz.ask(question='parent question', name="A", presenter=TestPresenter("A"))
 
         self.assertEqual(wiz['child1']['child2']['A'], 'A')
+
+
+    def test_ask_yes_no(self):
+        wiz = Wizard()
+        self.assertTrue(
+            wiz.ask_yn(
+                question="A",
+                presenter=TestPresenter("yes")
+            ))
+
+
+    def test_ask_yes_no(self):
+        wiz = Wizard()
+        self.assertTrue(
+            wiz.ask_yn(
+                question="A",
+                presenter=TestPresenter("yes")
+            ))
+
+    def test_ask_yn_default_true(self):
+        wiz = Wizard()
+        self.assertTrue(
+            wiz.ask_yn(
+                question="A",
+                presenter=TestPresenter(""),
+                default=True
+            ))
+
+
+    def test_ask_yn_default_false(self):
+        wiz = Wizard()
+        self.assertFalse(
+            wiz.ask_yn(
+                question="A",
+                presenter=TestPresenter(""),
+                default=False
+            ))
+
+
+    def test_ask_yes_no_no(self):
+        wiz = Wizard()
+        self.assertFalse(
+            wiz.ask_yn(
+                question="A",
+                presenter=TestPresenter("no")
+            ))
+
+
+
